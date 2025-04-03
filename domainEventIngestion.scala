@@ -1,5 +1,5 @@
 /opt/homebrew/Cellar/apache-spark/3.5.1/bin/spark-shell \
-  --packages "io.delta:delta-spark_2.12:3.1.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,io.prometheus:simpleclient:0.16.0,io.prometheus:simpleclient_httpserver:0.16.0" \
+  --packages "org.apache.kafka:kafka_2.12:3.4.0,org.apache.kafka:kafka-clients:3.4.0,io.delta:delta-spark_2.12:3.1.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,io.prometheus:simpleclient:0.16.0,io.prometheus:simpleclient_httpserver:0.16.0" \
   --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
   --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
 
@@ -15,6 +15,18 @@ import org.apache.spark.rdd.RDD
 import io.prometheus.client.exporter.HTTPServer
 import io.prometheus.client.{CollectorRegistry, Counter, Gauge}
 import java.net.InetSocketAddress
+import org.apache.kafka.clients.admin.{AdminClient, AdminClientConfig}
+import org.apache.kafka.common.{TopicPartition}
+import scala.collection.JavaConverters._
+import org.apache.kafka.clients.admin.{OffsetSpec, ListOffsetsResult}
+import org.apache.kafka.common.TopicPartition
+
+val kafkaParams = Map[String, Object](
+  AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG -> "localhost:9092"
+)
+
+val adminClient = AdminClient.create(kafkaParams.asJava)
+
 
 
 val spark = SparkSession.builder
@@ -43,6 +55,11 @@ val processingLagGauge = Gauge.build()
 .name("order_events_processing_lag_seconds")
 .help("Event time processing lag in seconds")
 .register(registry)
+
+val consumerLagGauge = Gauge.build()
+  .name("kafka_consumer_lag_total")
+  .help("Total Kafka consumer lag in records")
+  .register(registry)
 
 val prometheusServer = new HTTPServer(new InetSocketAddress(9093), registry)
 
@@ -85,6 +102,26 @@ private def setupDeltaTable(path: String, schema: StructType): Unit = {
 
 setupDeltaTable(deltaTablePath, parsedDF.schema)
 
+// Parse Spark's endOffset JSON
+def parseSparkOffsets(endOffset: String): Map[TopicPartition, Long] = {
+  val pattern = """"(\d+)":(\d+)""".r
+  val topic = "order_events" 
+  
+  pattern.findAllIn(endOffset)
+    .map { case pattern(partition, offset) =>
+      new TopicPartition(topic, partition.toInt) -> offset.toLong
+    }.toMap
+}
+
+
+def getKafkaOffsets(tps: Set[TopicPartition]): Map[TopicPartition, Long] = {
+  val specs = tps.map(tp => tp -> OffsetSpec.latest()).toMap.asJava
+  adminClient.listOffsets(specs).all().get().asScala
+    .map { case (tp, info) => 
+      tp -> info.offset() 
+    }.toMap
+}
+
 def monitorQuery(query: StreamingQuery): Unit = {
       new Thread(() => {
         while (query.isActive) {
@@ -94,6 +131,20 @@ def monitorQuery(query: StreamingQuery): Unit = {
             val timestampMillis = java.time.Instant.parse(progress.timestamp).toEpochMilli
             val lagSeconds = (System.currentTimeMillis() - timestampMillis) / 1000
             processingLagGauge.set(lagSeconds)
+
+            // Get offsets from Spark's progress
+            val sparkOffsets = parseSparkOffsets(progress.sources.head.endOffset)
+            // Get latest offsets from Kafka
+            val latestOffsets = getKafkaOffsets(sparkOffsets.keySet)
+            
+            // Calculate total lag
+            val totalLag = sparkOffsets.map { case (tp, sparkOffset) =>
+               latestOffsets.getOrElse(tp, 0L) - sparkOffset
+            }.sum
+        
+        consumerLagGauge.set(totalLag)
+
+
           }
           Thread.sleep(10000) // Update every 10 seconds
         }
