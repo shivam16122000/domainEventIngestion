@@ -25,3 +25,9 @@ resultDF.show()
 
  spark.sql("SELECT * FROM order_events version as of 1").show(false)
  spark.sql("SELECT * FROM order_events").show(false)
+
+ // Optimize Delta table
+spark.sql(s"OPTIMIZE delta.`$deltaTablePath` ZORDER BY (order_id)")
+
+// Vacuum old versions
+spark.sql(s"VACUUM delta.`$deltaTablePath` RETAIN 168 HOURS")
