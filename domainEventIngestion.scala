@@ -39,6 +39,8 @@ val spark = SparkSession.builder
 
 import spark.implicits._
 
+// promethues monitoring object val
+
 val registry = new CollectorRegistry(true)
 
 val rowsUpdatedCounter = Counter.build()
@@ -63,14 +65,14 @@ val consumerLagGauge = Gauge.build()
 
 val prometheusServer = new HTTPServer(new InetSocketAddress(9093), registry)
 
-
+// schema for domain event
 val orderSchema = new StructType()
     .add("order_id", StringType, nullable = false)
     .add("status", StringType)
     .add("event_time", TimestampType)
     .add("amount", DoubleType)
 
-
+// read from kafka in streaming fashion
 val kafkaDF = spark.readStream
   .format("kafka")
   .option("kafka.bootstrap.servers", "localhost:9092")
@@ -89,6 +91,7 @@ val parsedDF = kafkaDF
 val deltaTablePath = "hdfs://localhost:9001/delta/order_events"
 val checkpointLocation = "hdfs://localhost:9001/delta/order_events_checkpoint"
 
+// setup delta if not exist
 private def setupDeltaTable(path: String, schema: StructType): Unit = {
     val emptyRDD: RDD[Row] = spark.sparkContext.emptyRDD[Row]
     if (!DeltaTable.isDeltaTable(spark, path)) {
