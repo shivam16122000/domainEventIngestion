@@ -1,0 +1,55 @@
+// start HADOOP
+open terminal
+cd $HADOOP_HOME
+hdfs namenode -format
+sbin/start-all.sh
+jps
+
+// start Nifi
+cd /Users/shivam10.tiwari/Downloads/nifi-1.10.0
+bin/nifi.sh start
+http://localhost:8080/nifi/
+
+// start kafka server and zookeeper
+cd /Users/shivam10.tiwari/Downloads/kafka_2.13-3.9.0
+export CLASSPATH="/Users/shivam10.tiwari/Downloads/kafka_2.13-3.9.0/libs/log4j-1.2.17.jar"
+bin/zookeeper-server-start.sh config/zookeeper.properties
+
+
+Start Kafka Broker
+open new termial
+cd /Users/shivam10.tiwari/Downloads/kafka_2.13-3.9.0
+export CLASSPATH="/Users/shivam10.tiwari/Downloads/kafka_2.13-3.9.0/libs/log4j-1.2.17.jar"
+bin/kafka-server-start.sh config/server.properties
+
+
+// start spark job
+open new terminal
+/opt/homebrew/Cellar/apache-spark/3.5.1/bin/spark-shell \
+  --packages "org.apache.kafka:kafka_2.12:3.4.0,org.apache.kafka:kafka-clients:3.4.0,io.delta:delta-spark_2.12:3.1.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,io.prometheus:simpleclient:0.16.0,io.prometheus:simpleclient_httpserver:0.16.0" \
+  --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
+  --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+
+// start promethues
+open new terminal
+cd /Users/shivam10.tiwari/Downloads/prometheus-3.3.0-rc.0.darwin-arm64
+./prometheus --config.file=prometheus.yml --web.listen-address=:9091
+
+//start graphana
+open new terminal
+cd /Users/shivam10.tiwari/Downloads/grafana-v11.6.0
+./bin/grafana-server web
+
+// start hive metestore
+open new terminal
+cd $HIVE_HOME
+rm -rf metastore_db
+$HIVE_HOME/bin/schematool -dbType derby -initSchema
+$HIVE_HOME/bin/hive --service metastore
+
+// start spark for adhoc queries
+open new terminal
+/opt/homebrew/Cellar/apache-spark/3.5.1/bin/spark-shell \
+  --packages io.delta:delta-spark_2.12:3.1.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1 \
+  --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
+  --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
